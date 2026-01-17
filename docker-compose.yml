@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  pqc-server:
+    build: .
+    container_name: pqc-secure-server
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./keys:/app/keys
+      - ./received_files:/app/received_files
+    environment:
+      - PQC_KEY_STORE_PATH=/app/keys
+      - PQC_ALGORITHM=Kyber768
+      - STREAM_CHUNK_SIZE=4194304
+      - USE_AES_NI=true
+    restart: unless-stopped
+    networks:
+      - pqc-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pqc_secure_transfer; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  pqc-client:
+    build: .
+    container_name: pqc-secure-client
+    depends_on:
+      - pqc-server
+    volumes:
+      - ./test_files:/app/test_files
+    environment:
+      - PQC_SERVER_URI=ws://pqc-server:8765
+    networks:
+      - pqc-network
+    command: ["python", "examples/client.py", "--server", "ws://pqc-server:8765", "--create-test", "100"]
+    profiles:
+      - client
+
+  pqc-demo:
+    build: .
+    container_name: pqc-demo
+    volumes:
+      - ./demo_output:/app/demo_output
+    command: ["python", "simple_demo.py"]
+    profiles:
+      - demo
+
+  # Monitoring and logging (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pqc-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - pqc-network
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pqc-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - pqc-network
+    profiles:
+      - monitoring
+
+networks:
+  pqc-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  grafana-storage:
