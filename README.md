@@ -1,3 +1,9 @@
+[![CI/CD](https://github.com/gayatrigosavi2424/pqc-secure-transfer/workflows/CI/CD%20Pipeline/badge.svg)](https://github.com/gayatrigosavi2424/pqc-secure-transfer/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Security](https://img.shields.io/badge/security-quantum--safe-green.svg)](SECURITY.md)
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](Dockerfile)
+
 # PQC Secure Transfer System
 
 A production-ready Post-Quantum Cryptography (PQC) secure data transfer system designed for federated learning environments. This system can handle large payloads (15-20GB) efficiently while providing quantum-resistant security.
@@ -31,7 +37,7 @@ A production-ready Post-Quantum Cryptography (PQC) secure data transfer system d
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/gayatrigosavi2424/pqc-secure-transfer.git
 cd pqc-secure-transfer
 
 # Install dependencies
@@ -310,9 +316,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📞 Support
 
 For questions or issues:
-- Create an issue on GitHub
-- Check the [documentation](docs/)
-- Review [examples](examples/)
+- Create an issue on [GitHub](https://github.com/gayatrigosavi2424/pqc-secure-transfer/issues)
+- Check the [documentation](https://github.com/gayatrigosavi2424/pqc-secure-transfer#readme)
+- Review [examples](https://github.com/gayatrigosavi2424/pqc-secure-transfer/tree/main/examples)
 
 ---
 
