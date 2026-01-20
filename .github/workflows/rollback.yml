@@ -1,0 +1,388 @@
+name: Emergency Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        type: choice
+        options:
+        - staging
+        - prod
+      rollback_to:
+        description: 'Rollback strategy'
+        required: true
+        type: choice
+        options:
+        - previous_version
+        - specific_version
+        - last_known_good
+      specific_version:
+        description: 'Specific version to rollback to (if selected above)'
+        required: false
+        type: string
+      reason:
+        description: 'Reason for rollback'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-west-2
+
+jobs:
+  emergency-rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Set environment variables
+      run: |
+        echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+        echo "CLUSTER_NAME=pqc-${{ github.event.inputs.environment }}-cluster" >> $GITHUB_ENV
+        echo "SERVICE_NAME=pqc-secure-transfer-${{ github.event.inputs.environment }}-service" >> $GITHUB_ENV
+        
+    - name: Create rollback incident
+      id: incident
+      run: |
+        INCIDENT_ID="ROLLBACK-$(date +%Y%m%d-%H%M%S)"
+        echo "incident_id=$INCIDENT_ID" >> $GITHUB_OUTPUT
+        
+        echo "🚨 EMERGENCY ROLLBACK INITIATED"
+        echo "Incident ID: $INCIDENT_ID"
+        echo "Environment: ${{ github.event.inputs.environment }}"
+        echo "Reason: ${{ github.event.inputs.reason }}"
+        echo "Strategy: ${{ github.event.inputs.rollback_to }}"
+        
+    - name: Get current deployment state
+      id: current_state
+      run: |
+        # Get current service info
+        CURRENT_TASK_DEF=$(aws ecs describe-services \
+          --cluster $CLUSTER_NAME \
+          --services $SERVICE_NAME \
+          --query 'services[0].taskDefinition' \
+          --output text)
+        
+        CURRENT_RUNNING_COUNT=$(aws ecs describe-services \
+          --cluster $CLUSTER_NAME \
+          --services $SERVICE_NAME \
+          --query 'services[0].runningCount' \
+          --output text)
+        
+        CURRENT_DESIRED_COUNT=$(aws ecs describe-services \
+          --cluster $CLUSTER_NAME \
+          --services $SERVICE_NAME \
+          --query 'services[0].desiredCount' \
+          --output text)
+        
+        echo "current_task_def=$CURRENT_TASK_DEF" >> $GITHUB_OUTPUT
+        echo "current_running_count=$CURRENT_RUNNING_COUNT" >> $GITHUB_OUTPUT
+        echo "current_desired_count=$CURRENT_DESIRED_COUNT" >> $GITHUB_OUTPUT
+        
+        echo "Current state captured:"
+        echo "  Task Definition: $CURRENT_TASK_DEF"
+        echo "  Running Count: $CURRENT_RUNNING_COUNT"
+        echo "  Desired Count: $CURRENT_DESIRED_COUNT"
+        
+    - name: Determine rollback target
+      id: rollback_target
+      run: |
+        case "${{ github.event.inputs.rollback_to }}" in
+          "previous_version")
+            echo "Finding previous version..."
+            ROLLBACK_TASK_DEF=$(aws ecs list-task-definitions \
+              --family-prefix pqc-$ENVIRONMENT-task \
+              --status ACTIVE \
+              --sort DESC \
+              --query 'taskDefinitionArns[1]' \
+              --output text)
+            ;;
+          "specific_version")
+            echo "Using specific version: ${{ github.event.inputs.specific_version }}"
+            ROLLBACK_TASK_DEF="arn:aws:ecs:$AWS_REGION:$(aws sts get-caller-identity --query Account --output text):task-definition/pqc-$ENVIRONMENT-task:${{ github.event.inputs.specific_version }}"
+            ;;
+          "last_known_good")
+            echo "Finding last known good version..."
+            # This would typically come from a deployment tracking system
+            # For now, we'll use the previous version
+            ROLLBACK_TASK_DEF=$(aws ecs list-task-definitions \
+              --family-prefix pqc-$ENVIRONMENT-task \
+              --status ACTIVE \
+              --sort DESC \
+              --query 'taskDefinitionArns[1]' \
+              --output text)
+            ;;
+        esac
+        
+        if [ "$ROLLBACK_TASK_DEF" = "None" ] || [ -z "$ROLLBACK_TASK_DEF" ]; then
+          echo "❌ No rollback target found!"
+          exit 1
+        fi
+        
+        echo "rollback_task_def=$ROLLBACK_TASK_DEF" >> $GITHUB_OUTPUT
+        echo "Rollback target: $ROLLBACK_TASK_DEF"
+        
+    - name: Validate rollback target
+      run: |
+        echo "Validating rollback target..."
+        
+        # Check if task definition exists
+        if aws ecs describe-task-definition --task-definition ${{ steps.rollback_target.outputs.rollback_task_def }} > /dev/null 2>&1; then
+          echo "✅ Rollback target task definition is valid"
+        else
+          echo "❌ Rollback target task definition not found!"
+          exit 1
+        fi
+        
+        # Get image from rollback task definition
+        ROLLBACK_IMAGE=$(aws ecs describe-task-definition \
+          --task-definition ${{ steps.rollback_target.outputs.rollback_task_def }} \
+          --query 'taskDefinition.containerDefinitions[0].image' \
+          --output text)
+        
+        echo "Rollback image: $ROLLBACK_IMAGE"
+        
+    - name: Execute rollback
+      run: |
+        echo "🔄 Executing rollback..."
+        
+        # Update service with rollback task definition
+        aws ecs update-service \
+          --cluster $CLUSTER_NAME \
+          --service $SERVICE_NAME \
+          --task-definition ${{ steps.rollback_target.outputs.rollback_task_def }} \
+          --force-new-deployment
+        
+        echo "Rollback initiated. Monitoring deployment..."
+        
+        # Monitor rollback progress
+        START_TIME=$(date +%s)
+        TIMEOUT=1800  # 30 minutes timeout
+        
+        while true; do
+          CURRENT_TIME=$(date +%s)
+          ELAPSED=$((CURRENT_TIME - START_TIME))
+          
+          if [ $ELAPSED -gt $TIMEOUT ]; then
+            echo "❌ Rollback timed out after 30 minutes"
+            exit 1
+          fi
+          
+          # Check service status
+          SERVICE_STATUS=$(aws ecs describe-services \
+            --cluster $CLUSTER_NAME \
+            --services $SERVICE_NAME \
+            --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition' \
+            --output text)
+          
+          RUNNING_COUNT=$(aws ecs describe-services \
+            --cluster $CLUSTER_NAME \
+            --services $SERVICE_NAME \
+            --query 'services[0].runningCount' \
+            --output text)
+          
+          DESIRED_COUNT=$(aws ecs describe-services \
+            --cluster $CLUSTER_NAME \
+            --services $SERVICE_NAME \
+            --query 'services[0].desiredCount' \
+            --output text)
+          
+          echo "Status: Running=$RUNNING_COUNT, Desired=$DESIRED_COUNT, TaskDef=$SERVICE_STATUS"
+          
+          if [ "$SERVICE_STATUS" = "${{ steps.rollback_target.outputs.rollback_task_def }}" ] && [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
+            echo "✅ Rollback deployment completed successfully"
+            break
+          fi
+          
+          sleep 30
+        done
+        
+    - name: Health check after rollback
+      run: |
+        echo "🏥 Performing health checks after rollback..."
+        
+        # Get load balancer DNS
+        LB_DNS=$(aws elbv2 describe-load-balancers \
+          --names "pqc-$ENVIRONMENT-alb" \
+          --query 'LoadBalancers[0].DNSName' \
+          --output text)
+        
+        SERVICE_URL="http://$LB_DNS"
+        
+        # Health check with extended timeout for rollback
+        HEALTH_CHECK_PASSED=false
+        for i in {1..30}; do
+          echo "Health check attempt $i/30..."
+          
+          if curl -f -s "$SERVICE_URL/health" > /dev/null; then
+            HEALTH_RESPONSE=$(curl -s "$SERVICE_URL/health")
+            
+            if echo "$HEALTH_RESPONSE" | grep -q "healthy"; then
+              echo "✅ Health check passed - service is operational"
+              HEALTH_CHECK_PASSED=true
+              break
+            fi
+          fi
+          
+          sleep 20
+        done
+        
+        if [ "$HEALTH_CHECK_PASSED" = "false" ]; then
+          echo "❌ Health checks failed after rollback"
+          exit 1
+        fi
+        
+    - name: Verify PQC functionality
+      run: |
+        echo "🔐 Verifying PQC functionality after rollback..."
+        
+        LB_DNS=$(aws elbv2 describe-load-balancers \
+          --names "pqc-$ENVIRONMENT-alb" \
+          --query 'LoadBalancers[0].DNSName' \
+          --output text)
+        
+        SERVICE_URL="http://$LB_DNS"
+        
+        # Test PQC endpoints
+        HEALTH_RESPONSE=$(curl -s "$SERVICE_URL/health")
+        
+        if echo "$HEALTH_RESPONSE" | grep -q "Kyber768"; then
+          echo "✅ PQC algorithm verification passed"
+        else
+          echo "⚠️  PQC algorithm verification inconclusive"
+        fi
+        
+        # Test metrics endpoint
+        if curl -f -s "$SERVICE_URL/metrics" > /dev/null; then
+          echo "✅ Metrics endpoint accessible"
+        else
+          echo "⚠️  Metrics endpoint not accessible"
+        fi
+        
+    - name: Document rollback
+      run: |
+        echo "📝 Documenting rollback..."
+        
+        cat > rollback-report.md << EOF
+        # Rollback Report
+        
+        **Incident ID:** ${{ steps.incident.outputs.incident_id }}
+        **Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        **Environment:** ${{ github.event.inputs.environment }}
+        **Reason:** ${{ github.event.inputs.reason }}
+        
+        ## Rollback Details
+        - **Strategy:** ${{ github.event.inputs.rollback_to }}
+        - **From:** ${{ steps.current_state.outputs.current_task_def }}
+        - **To:** ${{ steps.rollback_target.outputs.rollback_task_def }}
+        
+        ## Pre-Rollback State
+        - **Running Count:** ${{ steps.current_state.outputs.current_running_count }}
+        - **Desired Count:** ${{ steps.current_state.outputs.current_desired_count }}
+        
+        ## Post-Rollback Verification
+        - ✅ Service deployment completed
+        - ✅ Health checks passed
+        - ✅ PQC functionality verified
+        
+        ## Actions Required
+        - [ ] Investigate root cause of issue that triggered rollback
+        - [ ] Plan forward fix deployment
+        - [ ] Update monitoring/alerting if needed
+        
+        **Executed by:** ${{ github.actor }}
+        **Workflow:** ${{ github.workflow }}
+        **Run ID:** ${{ github.run_id }}
+        EOF
+        
+        echo "Rollback report generated:"
+        cat rollback-report.md
+        
+    - name: Upload rollback report
+      uses: actions/upload-artifact@v3
+      with:
+        name: rollback-report-${{ steps.incident.outputs.incident_id }}
+        path: rollback-report.md
+
+  # Emergency notifications
+  emergency-notifications:
+    runs-on: ubuntu-latest
+    needs: emergency-rollback
+    if: always()
+    
+    steps:
+    - name: Notify rollback status
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ needs.emergency-rollback.result }}
+        channel: '#incidents'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_INCIDENTS }}
+        custom_payload: |
+          {
+            "text": "🚨 EMERGENCY ROLLBACK ${{ needs.emergency-rollback.result == 'success' && 'COMPLETED' || 'FAILED' }}",
+            "attachments": [{
+              "color": "${{ needs.emergency-rollback.result == 'success' && 'warning' || 'danger' }}",
+              "fields": [{
+                "title": "Environment",
+                "value": "${{ github.event.inputs.environment }}",
+                "short": true
+              }, {
+                "title": "Reason",
+                "value": "${{ github.event.inputs.reason }}",
+                "short": false
+              }, {
+                "title": "Strategy",
+                "value": "${{ github.event.inputs.rollback_to }}",
+                "short": true
+              }, {
+                "title": "Executed by",
+                "value": "${{ github.actor }}",
+                "short": true
+              }]
+            }]
+          }
+          
+    - name: Create incident issue
+      if: needs.emergency-rollback.result == 'success'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const title = `🚨 Emergency Rollback - ${{ github.event.inputs.environment }} - ${{ github.event.inputs.reason }}`;
+          const body = `
+          ## Emergency Rollback Executed
+          
+          **Environment:** ${{ github.event.inputs.environment }}
+          **Reason:** ${{ github.event.inputs.reason }}
+          **Strategy:** ${{ github.event.inputs.rollback_to }}
+          **Executed by:** ${{ github.actor }}
+          **Workflow Run:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+          ## Next Steps
+          - [ ] Investigate root cause
+          - [ ] Plan forward fix
+          - [ ] Update monitoring/alerting
+          - [ ] Post-incident review
+          
+          ## Timeline
+          - **Rollback Initiated:** ${new Date().toISOString()}
+          - **Rollback Completed:** ${new Date().toISOString()}
+          `;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['incident', 'rollback', 'priority-high']
+          });

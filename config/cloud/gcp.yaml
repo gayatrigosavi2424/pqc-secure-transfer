@@ -1,0 +1,16 @@
+# GCP-specific configuration overrides
+
+deployment:
+  cloud_provider: "gcp"
+  region: "us-central1"
+  custom_env_vars:
+    GOOGLE_CLOUD_REGION: "us-central1"
+
+security:
+  cloud_security_settings:
+    enable_iam: "true"
+    enable_secret_manager: "true"
+    enable_kms: "true"
+
+monitoring:
+  monitoring_stack: "prometheus"

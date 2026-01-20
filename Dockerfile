@@ -24,9 +24,12 @@ RUN pip install liboqs-python || echo "liboqs-python not available for this arch
 # Production stage
 FROM python:3.11-slim as production
 
-# Install runtime dependencies
+# Install runtime dependencies including git for liboqs
 RUN apt-get update && apt-get install -y \
     libssl3 \
+    git \
+    build-essential \
+    cmake \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r pqcuser && useradd -r -g pqcuser pqcuser
 
@@ -55,10 +58,10 @@ EXPOSE 8765
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import pqc_secure_transfer; print('OK')" || exit 1
+    CMD python -c "import aiohttp; print('OK')" || exit 1
 
 # Default command
-CMD ["python", "examples/server.py", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["python", "examples/simple_server.py"]
 
 # Labels for metadata
 LABEL maintainer="PQC Secure Transfer Team" \

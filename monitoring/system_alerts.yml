@@ -1,0 +1,146 @@
+# System-level alerting rules for Prometheus
+groups:
+  - name: system_resource_alerts
+    rules:
+      # CPU Alerts
+      - alert: HighCPUUsage
+        expr: cpu_usage_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU {{ $labels.cpu }} usage is {{ $value }}% in environment {{ $labels.environment }}"
+          
+      - alert: CriticalCPUUsage
+        expr: cpu_usage_percent > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Critical CPU usage detected"
+          description: "CPU {{ $labels.cpu }} usage is {{ $value }}% in environment {{ $labels.environment }}"
+          
+      # Memory Alerts
+      - alert: HighMemoryUsage
+        expr: (memory_usage_bytes{type="used"} / memory_usage_bytes{type="total"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}% in environment {{ $labels.environment }}"
+          
+      - alert: CriticalMemoryUsage
+        expr: (memory_usage_bytes{type="used"} / memory_usage_bytes{type="total"}) * 100 > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Critical memory usage detected"
+          description: "Memory usage is {{ $value }}% in environment {{ $labels.environment }}"
+          
+      # Disk Alerts
+      - alert: HighDiskUsage
+        expr: (disk_usage_bytes{type="used"} / disk_usage_bytes{type="total"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High disk usage detected"
+          description: "Disk {{ $labels.device }} usage is {{ $value }}% in environment {{ $labels.environment }}"
+          
+      - alert: CriticalDiskUsage
+        expr: (disk_usage_bytes{type="used"} / disk_usage_bytes{type="total"}) * 100 > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Critical disk usage detected"
+          description: "Disk {{ $labels.device }} usage is {{ $value }}% in environment {{ $labels.environment }}"
+
+  - name: application_alerts
+    rules:
+      # Service Uptime
+      - alert: ServiceRestart
+        expr: increase(service_uptime_seconds[5m]) < 0
+        for: 0m
+        labels:
+          severity: warning
+          component: service
+        annotations:
+          summary: "Service restart detected"
+          description: "Service {{ $labels.service }} has restarted in environment {{ $labels.environment }}"
+          
+      # Error Rate
+      - alert: HighErrorRate
+        expr: error_rate_percent > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "High application error rate"
+          description: "Error rate for {{ $labels.service }} is {{ $value }}% in environment {{ $labels.environment }}"
+          
+      - alert: CriticalErrorRate
+        expr: error_rate_percent > 15
+        for: 2m
+        labels:
+          severity: critical
+          component: application
+        annotations:
+          summary: "Critical application error rate"
+          description: "Error rate for {{ $labels.service }} is {{ $value }}% in environment {{ $labels.environment }}"
+          
+      # Connection Monitoring
+      - alert: HighConnectionCount
+        expr: active_connections > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: connections
+        annotations:
+          summary: "High number of active connections"
+          description: "{{ $value }} active {{ $labels.type }} connections in environment {{ $labels.environment }}"
+          
+      # Health Check Alerts
+      - alert: HealthCheckFailing
+        expr: health_check_status == 0
+        for: 3m
+        labels:
+          severity: warning
+          component: health
+        annotations:
+          summary: "Health check failing"
+          description: "Health check {{ $labels.check_name }} is failing in environment {{ $labels.environment }}"
+
+  - name: network_alerts
+    rules:
+      # Network Traffic
+      - alert: HighNetworkTraffic
+        expr: rate(network_bytes_total[5m]) > 100000000  # 100 MB/s
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High network traffic detected"
+          description: "Network traffic on {{ $labels.interface }} ({{ $labels.direction }}) is {{ $value }} bytes/sec"
+          
+      # Network Connectivity (would need additional exporters)
+      - alert: NetworkConnectivityIssue
+        expr: health_check_status{check_name="network_connectivity"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: network
+        annotations:
+          summary: "Network connectivity issues detected"
+          description: "Network connectivity health check is failing in environment {{ $labels.environment }}"

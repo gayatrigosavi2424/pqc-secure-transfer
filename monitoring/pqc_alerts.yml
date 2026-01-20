@@ -1,0 +1,144 @@
+# PQC-specific alerting rules for Prometheus
+groups:
+  - name: pqc_security_alerts
+    rules:
+      # PQC Key Exchange Failures
+      - alert: PQCKeyExchangeFailureRate
+        expr: rate(pqc_key_exchanges_total{status="error"}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          component: pqc
+        annotations:
+          summary: "High PQC key exchange failure rate"
+          description: "PQC key exchange failure rate is {{ $value }} failures/sec for algorithm {{ $labels.algorithm }}"
+          
+      - alert: PQCKeyExchangeLatency
+        expr: histogram_quantile(0.95, rate(pqc_key_exchange_duration_seconds_bucket[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: pqc
+        annotations:
+          summary: "High PQC key exchange latency"
+          description: "95th percentile PQC key exchange latency is {{ $value }}s for algorithm {{ $labels.algorithm }}"
+          
+      # PQC Security Events
+      - alert: PQCSecurityEvent
+        expr: increase(pqc_security_events_total{severity="critical"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Critical PQC security event detected"
+          description: "Critical security event of type {{ $labels.event_type }} detected"
+          
+      - alert: PQCSecurityEventRate
+        expr: rate(pqc_security_events_total{severity=~"warning|error"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "High rate of PQC security events"
+          description: "Security event rate is {{ $value }} events/sec for type {{ $labels.event_type }}"
+
+  - name: pqc_performance_alerts
+    rules:
+      # File Transfer Performance
+      - alert: FileTransferThroughputLow
+        expr: histogram_quantile(0.50, rate(file_transfer_throughput_mbps_bucket[10m])) < 50
+        for: 10m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "Low file transfer throughput"
+          description: "Median file transfer throughput is {{ $value }} MB/s, below 50 MB/s requirement"
+          
+      - alert: FileTransferFailureRate
+        expr: rate(file_transfers_total{status="error"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: transfers
+        annotations:
+          summary: "High file transfer failure rate"
+          description: "File transfer failure rate is {{ $value }} failures/sec for type {{ $labels.transfer_type }}"
+          
+      # Encryption Performance
+      - alert: EncryptionThroughputLow
+        expr: encryption_throughput_mbps < 25
+        for: 5m
+        labels:
+          severity: warning
+          component: encryption
+        annotations:
+          summary: "Low encryption throughput"
+          description: "Encryption throughput is {{ $value }} MB/s for algorithm {{ $labels.algorithm }}"
+          
+      # Active Transfer Monitoring
+      - alert: TooManyActiveTransfers
+        expr: active_transfers > 100
+        for: 2m
+        labels:
+          severity: warning
+          component: transfers
+        annotations:
+          summary: "High number of active transfers"
+          description: "{{ $value }} active transfers of type {{ $labels.transfer_type }}"
+          
+      - alert: TransferQueueBacklog
+        expr: transfer_queue_length > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: transfers
+        annotations:
+          summary: "Large transfer queue backlog"
+          description: "Transfer queue has {{ $value }} items for priority {{ $labels.priority }}"
+
+  - name: pqc_availability_alerts
+    rules:
+      # Service Health
+      - alert: PQCServiceDown
+        expr: up{job="pqc-secure-transfer"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: service
+        annotations:
+          summary: "PQC Secure Transfer service is down"
+          description: "PQC Secure Transfer service has been down for more than 1 minute"
+          
+      - alert: PQCHealthCheckFailing
+        expr: health_check_status{check_name=~"pqc_.*"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: health
+        annotations:
+          summary: "PQC health check failing"
+          description: "Health check {{ $labels.check_name }} has been failing for more than 3 minutes"
+          
+      # Key Management
+      - alert: PQCKeyRotationOverdue
+        expr: time() - pqc_key_rotations_total > 86400 * 7  # 7 days
+        for: 0m
+        labels:
+          severity: warning
+          component: key_management
+        annotations:
+          summary: "PQC key rotation overdue"
+          description: "PQC keys for algorithm {{ $labels.algorithm }} have not been rotated in over 7 days"
+          
+      - alert: PQCActiveKeysLow
+        expr: pqc_active_keys < 1
+        for: 1m
+        labels:
+          severity: critical
+          component: key_management
+        annotations:
+          summary: "No active PQC keys"
+          description: "No active {{ $labels.key_type }} keys for algorithm {{ $labels.algorithm }}"

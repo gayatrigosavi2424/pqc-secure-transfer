@@ -1,0 +1,34 @@
+# Development environment configuration overrides
+
+deployment:
+  resource_limits:
+    cpu: "500m"
+    memory: "1Gi"
+    max_instances: 3
+    min_instances: 1
+  enable_autoscaling: false
+  enable_ssl: false
+  custom_env_vars:
+    DEBUG: "true"
+    LOG_LEVEL: "DEBUG"
+
+security:
+  access_control:
+    enable_mfa: false
+  key_management:
+    key_rotation_days: 90
+  audit:
+    log_retention_days: 30
+  allowed_cidr_blocks:
+    - "0.0.0.0/0"
+
+monitoring:
+  metrics:
+    retention_days: 7
+  logging:
+    log_level: "DEBUG"
+    log_retention_days: 7
+  alerting:
+    enable_alerting: false
+  tracing:
+    sampling_rate: 1.0

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pqc-secure-transfer
+  labels:
+    app: pqc-secure-transfer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pqc-secure-transfer
+  template:
+    metadata:
+      labels:
+        app: pqc-secure-transfer
+    spec:
+      containers:
+      - name: pqc-secure-transfer
+        image: pqc-secure-transfer:latest
+        ports:
+        - containerPort: 8765
+          name: websocket
+        env:
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: pqc-config
+              key: environment
+        - name: PQC_ALGORITHM
+          valueFrom:
+            configMapKeyRef:
+              name: pqc-config
+              key: pqc_algorithm
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8765
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8765
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pqc-secure-transfer-service
+  labels:
+    app: pqc-secure-transfer
+spec:
+  selector:
+    app: pqc-secure-transfer
+  ports:
+  - port: 8765
+    targetPort: 8765
+    name: websocket
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pqc-config
+data:
+  environment: "dev"
+  pqc_algorithm: "Kyber768"
+  log_level: "INFO"

@@ -1,0 +1,16 @@
+# AWS-specific configuration overrides
+
+deployment:
+  cloud_provider: "aws"
+  region: "us-west-2"
+  custom_env_vars:
+    AWS_DEFAULT_REGION: "us-west-2"
+
+security:
+  cloud_security_settings:
+    enable_iam_roles: "true"
+    enable_secrets_manager: "true"
+    enable_kms: "true"
+
+monitoring:
+  monitoring_stack: "cloudwatch"

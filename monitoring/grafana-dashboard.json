@@ -1,0 +1,329 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "PQC Secure Transfer Monitoring",
+    "tags": ["pqc", "security", "monitoring"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "PQC Key Exchange Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "rate(pqc_key_exchanges_total[5m])",
+            "legendFormat": "{{algorithm}} - {{status}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Exchanges/sec",
+            "min": 0
+          }
+        ],
+        "legend": {
+          "show": true,
+          "values": true,
+          "current": true
+        }
+      },
+      {
+        "id": 2,
+        "title": "PQC Key Exchange Latency",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(pqc_key_exchange_duration_seconds_bucket[5m]))",
+            "legendFormat": "50th percentile",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(pqc_key_exchange_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th percentile",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(pqc_key_exchange_duration_seconds_bucket[5m]))",
+            "legendFormat": "99th percentile",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "File Transfer Throughput",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(file_transfer_throughput_mbps_bucket[5m]))",
+            "legendFormat": "Median Throughput",
+            "refId": "A"
+          },
+          {
+            "expr": "encryption_throughput_mbps",
+            "legendFormat": "Encryption Throughput - {{algorithm}}",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "MB/s",
+            "min": 0
+          }
+        ],
+        "thresholds": [
+          {
+            "value": 50,
+            "colorMode": "critical",
+            "op": "lt"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Active Transfers",
+        "type": "singlestat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(active_transfers)",
+            "refId": "A"
+          }
+        ],
+        "valueName": "current",
+        "colorBackground": true,
+        "thresholds": "50,100"
+      },
+      {
+        "id": 5,
+        "title": "Transfer Queue Length",
+        "type": "singlestat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(transfer_queue_length)",
+            "refId": "A"
+          }
+        ],
+        "valueName": "current",
+        "colorBackground": true,
+        "thresholds": "25,50"
+      },
+      {
+        "id": 6,
+        "title": "System Resource Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "avg(cpu_usage_percent)",
+            "legendFormat": "CPU Usage %",
+            "refId": "A"
+          },
+          {
+            "expr": "(memory_usage_bytes{type=\"used\"} / memory_usage_bytes{type=\"total\"}) * 100",
+            "legendFormat": "Memory Usage %",
+            "refId": "B"
+          },
+          {
+            "expr": "(disk_usage_bytes{type=\"used\"} / disk_usage_bytes{type=\"total\"}) * 100",
+            "legendFormat": "Disk Usage % - {{device}}",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "thresholds": [
+          {
+            "value": 80,
+            "colorMode": "critical",
+            "op": "gt"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Health Check Status",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "health_check_status",
+            "format": "table",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "columns": [
+          {
+            "text": "Check Name",
+            "value": "check_name"
+          },
+          {
+            "text": "Status",
+            "value": "Value"
+          },
+          {
+            "text": "Environment",
+            "value": "environment"
+          }
+        ],
+        "transform": "table"
+      },
+      {
+        "id": 8,
+        "title": "PQC Security Events",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "rate(pqc_security_events_total[5m])",
+            "legendFormat": "{{event_type}} - {{severity}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Events/sec",
+            "min": 0
+          }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [0.1],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": ["A", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "for": "2m",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "PQC Security Events Alert",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 9,
+        "title": "Service Uptime",
+        "type": "singlestat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 24},
+        "targets": [
+          {
+            "expr": "service_uptime_seconds",
+            "refId": "A"
+          }
+        ],
+        "valueName": "current",
+        "unit": "s",
+        "colorBackground": false
+      },
+      {
+        "id": 10,
+        "title": "Error Rate",
+        "type": "singlestat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 24},
+        "targets": [
+          {
+            "expr": "error_rate_percent",
+            "refId": "A"
+          }
+        ],
+        "valueName": "current",
+        "unit": "percent",
+        "colorBackground": true,
+        "thresholds": "5,15"
+      },
+      {
+        "id": 11,
+        "title": "Network Traffic",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+        "targets": [
+          {
+            "expr": "rate(network_bytes_total{direction=\"sent\"}[5m])",
+            "legendFormat": "Sent - {{interface}}",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(network_bytes_total{direction=\"received\"}[5m])",
+            "legendFormat": "Received - {{interface}}",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes/sec",
+            "min": 0
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "environment",
+          "type": "query",
+          "query": "label_values(pqc_key_exchanges_total, environment)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        },
+        {
+          "name": "algorithm",
+          "type": "query",
+          "query": "label_values(pqc_key_exchanges_total, algorithm)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "prometheus",
+          "expr": "changes(service_uptime_seconds[1m]) > 0",
+          "titleFormat": "Service Restart",
+          "textFormat": "Service restarted in {{environment}}"
+        }
+      ]
+    }
+  }
+}

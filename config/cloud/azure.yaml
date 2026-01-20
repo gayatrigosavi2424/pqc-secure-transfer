@@ -1,0 +1,15 @@
+# Azure-specific configuration overrides
+
+deployment:
+  cloud_provider: "azure"
+  region: "eastus"
+  custom_env_vars:
+    AZURE_REGION: "eastus"
+
+security:
+  cloud_security_settings:
+    enable_managed_identity: "true"
+    enable_key_vault: "true"
+
+monitoring:
+  monitoring_stack: "prometheus"

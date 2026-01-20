@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pqc-config
+data:
+  environment: "dev"
+  log_level: "DEBUG"

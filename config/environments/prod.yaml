@@ -1,0 +1,42 @@
+# Production environment configuration overrides
+
+deployment:
+  resource_limits:
+    cpu: "2000m"
+    memory: "4Gi"
+    max_instances: 50
+    min_instances: 3
+  enable_autoscaling: true
+  enable_ssl: true
+  region: "us-east-1"
+  custom_env_vars:
+    LOG_LEVEL: "INFO"
+
+security:
+  access_control:
+    enable_mfa: true
+  key_management:
+    key_rotation_days: 7
+    enable_key_escrow: true
+  audit:
+    log_retention_days: 365
+  enable_compliance_checks: true
+  allowed_cidr_blocks:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+monitoring:
+  metrics:
+    retention_days: 90
+  logging:
+    log_level: "INFO"
+    log_retention_days: 90
+  alerting:
+    enable_alerting: true
+    cpu_threshold_percent: 70.0
+    memory_threshold_percent: 75.0
+    error_rate_threshold_percent: 1.0
+  tracing:
+    sampling_rate: 0.1
+    trace_retention_days: 30

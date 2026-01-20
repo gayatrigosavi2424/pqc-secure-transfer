@@ -1,0 +1,412 @@
+name: PQC Secure Transfer CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: pqc-secure-transfer
+
+jobs:
+  # Build and Test Job
+  build-and-test:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov flake8 black isort
+        
+    - name: Code formatting check
+      run: |
+        black --check .
+        isort --check-only .
+        
+    - name: Lint code
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        
+    - name: Run unit tests
+      run: |
+        pytest tests/ -v --cov=pqc_secure_transfer --cov-report=xml --cov-report=html
+        
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          
+    - name: Build Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ steps.meta.outputs.tags }}
+        format: spdx-json
+        output-file: sbom.spdx.json
+        
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v3
+      with:
+        name: sbom
+        path: sbom.spdx.json
+
+  # Security Scanning Job
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ needs.build-and-test.outputs.image-tag }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+        
+    - name: Run Snyk security scan
+      uses: snyk/actions/docker@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        image: ${{ needs.build-and-test.outputs.image-tag }}
+        args: --severity-threshold=high
+      continue-on-error: true
+      
+    - name: Secret scanning
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
+
+  # PQC Functionality Tests
+  pqc-tests:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Test PQC functionality
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          ${{ needs.build-and-test.outputs.image-tag }} \
+          python -c "
+        import sys
+        sys.path.append('/workspace')
+        
+        # Test PQC algorithm imports
+        try:
+            from pqc_secure_transfer import PQCKeyExchange, StreamingEncryptor
+            print('✓ PQC modules imported successfully')
+        except ImportError as e:
+            print(f'✗ PQC import failed: {e}')
+            sys.exit(1)
+            
+        # Test key generation
+        try:
+            kex = PQCKeyExchange('Kyber768')
+            public_key, secret_key = kex.generate_keypair()
+            print(f'✓ Key generation successful: {len(public_key)} bytes public key')
+        except Exception as e:
+            print(f'✗ Key generation failed: {e}')
+            sys.exit(1)
+            
+        # Test encryption/decryption
+        try:
+            import os
+            test_data = os.urandom(1024)  # 1KB test data
+            encryptor = StreamingEncryptor(secret_key[:32])  # Use first 32 bytes as AES key
+            encrypted = encryptor.encrypt_data(test_data)
+            decrypted = encryptor.decrypt_data(encrypted)
+            assert test_data == decrypted
+            print('✓ Encryption/decryption test passed')
+        except Exception as e:
+            print(f'✗ Encryption test failed: {e}')
+            sys.exit(1)
+            
+        print('All PQC functionality tests passed!')
+        "
+        
+    - name: Performance benchmark
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          ${{ needs.build-and-test.outputs.image-tag }} \
+          python -c "
+        import sys, time, os
+        sys.path.append('/workspace')
+        from pqc_secure_transfer import StreamingEncryptor
+        
+        # Performance test for large data encryption
+        test_size = 10 * 1024 * 1024  # 10MB
+        test_data = os.urandom(test_size)
+        
+        key = os.urandom(32)
+        encryptor = StreamingEncryptor(key)
+        
+        start_time = time.time()
+        encrypted = encryptor.encrypt_data(test_data)
+        encryption_time = time.time() - start_time
+        
+        throughput_mbps = (test_size / (1024 * 1024)) / encryption_time
+        print(f'Encryption throughput: {throughput_mbps:.2f} MB/s')
+        
+        # Requirement: Must achieve at least 50 MB/s for large files
+        if throughput_mbps < 50:
+            print(f'✗ Performance requirement not met: {throughput_mbps:.2f} MB/s < 50 MB/s')
+            sys.exit(1)
+        else:
+            print(f'✓ Performance requirement met: {throughput_mbps:.2f} MB/s >= 50 MB/s')
+        "
+
+  # Deploy to Development
+  deploy-dev:
+    runs-on: ubuntu-latest
+    needs: [build-and-test, security-scan, pqc-tests]
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    environment: development
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+        
+    - name: Deploy to development
+      run: |
+        cd terraform/environments/dev
+        terraform init
+        terraform plan \
+          -var="image_tag=${{ github.sha }}" \
+          -var="cloud_provider=aws"
+        terraform apply -auto-approve \
+          -var="image_tag=${{ github.sha }}" \
+          -var="cloud_provider=aws"
+          
+    - name: Run smoke tests
+      run: |
+        # Get service endpoint from Terraform output
+        SERVICE_URL=$(cd terraform/environments/dev && terraform output -raw service_endpoint)
+        echo "Testing service at: $SERVICE_URL"
+        
+        # Wait for service to be ready
+        for i in {1..30}; do
+          if curl -f -s "$SERVICE_URL/health" > /dev/null; then
+            echo "✓ Service is healthy"
+            break
+          fi
+          echo "Waiting for service... ($i/30)"
+          sleep 10
+        done
+        
+        # Test health endpoint
+        HEALTH_RESPONSE=$(curl -s "$SERVICE_URL/health")
+        echo "Health response: $HEALTH_RESPONSE"
+        
+        if echo "$HEALTH_RESPONSE" | grep -q "healthy"; then
+          echo "✓ Health check passed"
+        else
+          echo "✗ Health check failed"
+          exit 1
+        fi
+
+  # Deploy to Staging
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [build-and-test, security-scan, pqc-tests]
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+        
+    - name: Deploy to staging
+      run: |
+        cd terraform/environments/staging
+        terraform init
+        terraform plan \
+          -var="image_tag=${{ github.sha }}" \
+          -var="cloud_provider=aws"
+        terraform apply -auto-approve \
+          -var="image_tag=${{ github.sha }}" \
+          -var="cloud_provider=aws"
+          
+    - name: Run integration tests
+      run: |
+        SERVICE_URL=$(cd terraform/environments/staging && terraform output -raw service_endpoint)
+        
+        # Extended integration tests for staging
+        python -c "
+        import requests, time, json
+        
+        service_url = '$SERVICE_URL'
+        print(f'Running integration tests against: {service_url}')
+        
+        # Test health endpoint
+        response = requests.get(f'{service_url}/health', timeout=30)
+        assert response.status_code == 200
+        health_data = response.json()
+        assert health_data['status'] == 'healthy'
+        print('✓ Health check passed')
+        
+        # Test metrics endpoint
+        response = requests.get(f'{service_url}/metrics', timeout=30)
+        assert response.status_code == 200
+        print('✓ Metrics endpoint accessible')
+        
+        print('All integration tests passed!')
+        "
+
+  # Deploy to Production
+  deploy-prod:
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+        aws-region: us-east-1
+        
+    - name: Deploy to production
+      run: |
+        cd terraform/environments/prod
+        terraform init
+        terraform plan \
+          -var="image_tag=${{ github.sha }}" \
+          -var="cloud_provider=aws"
+        terraform apply -auto-approve \
+          -var="image_tag=${{ github.sha }}" \
+          -var="cloud_provider=aws"
+          
+    - name: Run production smoke tests
+      run: |
+        SERVICE_URL=$(cd terraform/environments/prod && terraform output -raw service_endpoint)
+        
+        # Production smoke tests
+        for i in {1..60}; do
+          if curl -f -s "$SERVICE_URL/health" > /dev/null; then
+            echo "✓ Production service is healthy"
+            break
+          fi
+          echo "Waiting for production service... ($i/60)"
+          sleep 10
+        done
+        
+        # Verify PQC functionality in production
+        HEALTH_RESPONSE=$(curl -s "$SERVICE_URL/health")
+        if echo "$HEALTH_RESPONSE" | grep -q "Kyber768"; then
+          echo "✓ PQC algorithm verified in production"
+        else
+          echo "✗ PQC algorithm verification failed"
+          exit 1
+        fi
+
+  # Notification Job
+  notify:
+    runs-on: ubuntu-latest
+    needs: [deploy-dev, deploy-staging, deploy-prod]
+    if: always()
+    
+    steps:
+    - name: Notify deployment status
+      uses: 8398a7/action-slack@v3
+      if: always()
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow

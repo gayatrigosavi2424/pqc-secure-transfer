@@ -1,0 +1,31 @@
+# Staging environment configuration overrides
+
+deployment:
+  resource_limits:
+    cpu: "1000m"
+    memory: "2Gi"
+    max_instances: 10
+    min_instances: 2
+  enable_autoscaling: true
+  enable_ssl: true
+  custom_env_vars:
+    LOG_LEVEL: "INFO"
+
+security:
+  access_control:
+    enable_mfa: false
+  key_management:
+    key_rotation_days: 30
+  audit:
+    log_retention_days: 60
+
+monitoring:
+  metrics:
+    retention_days: 30
+  logging:
+    log_level: "INFO"
+    log_retention_days: 30
+  alerting:
+    enable_alerting: true
+  tracing:
+    sampling_rate: 0.5
